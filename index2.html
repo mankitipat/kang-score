@@ -1,0 +1,341 @@
+
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <title>บันทึกคะแนนไพ่แคง</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      margin: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    h1, h2 {
+      color: #2c3e50;
+    }
+    button {
+      padding: 8px 14px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 5px 0;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    input, select {
+      padding: 6px;
+      margin: 5px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    .player {
+      margin-bottom: 10px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 10px;
+      background-color: white;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: center;
+    }
+    th {
+      background-color: #ecf0f1;
+    }
+    #log {
+      background-color: white;
+      padding: 10px;
+      border: 1px solid #ccc;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>แอปบันทึกคะแนนไพ่แคง</h1>
+
+  <h2>1. ผู้เล่น</h2>
+  <div id="players" class="player-list"></div>
+  <button onclick="addPlayer()">เพิ่มผู้เล่น</button>
+
+  <h2>2. เริ่มเกม</h2>
+  <button onclick="startGame()">เริ่มเกม (หักคนละ 10 แต้ม)</button>
+  <button onclick="resetGame()">รีเซ็ตเกม</button>
+
+  <h2>3. บันทึกรอบ</h2>
+  <div>
+    <label>เลือกคนแคง:</label>
+    <select id="winnerSelect"></select>
+    <button onclick="addKang()">แคงสำเร็จ</button>
+    <button onclick="failKang()">แคงพลาด</button>
+  </div>
+
+  <div style="margin-top: 10px;">
+    <label>เลือกคนไหล:</label>
+    <select id="flowFromSelect"></select>
+    <label>ใส่คนถูกไหล:</label>
+    <select id="flowToSelect"></select>
+    <button onclick="addFlow()">ไหล!</button>
+  </div>
+
+  <button onclick="undo()">ย้อนกลับ</button>
+
+  <h2>4. ตารางบันทึก</h2>
+  <ul id="log"></ul>
+
+  <h2>5. สรุปคะแนนรวม</h2>
+  <div id="scoreBoard"></div>
+
+  <h2>6. สรุปคะแนนแยกประเภท</h2>
+  <div id="details"></div>
+
+  <h2>7. สรุปการชำระ</h2>
+  <div id="payments"></div>
+
+  <script>
+    let players = [];
+    let scores = {};
+    let kangPoints = {};
+    let flowPoints = {};
+    let flowDetail = {};
+    let log = [];
+    let history = [];
+    let pot = 0;
+    let gameStarted = false;
+    let skipNextStart = false;
+
+    function saveState() {
+      history.push({
+        scores: JSON.parse(JSON.stringify(scores)),
+        kangPoints: JSON.parse(JSON.stringify(kangPoints)),
+        flowPoints: JSON.parse(JSON.stringify(flowPoints)),
+        flowDetail: JSON.parse(JSON.stringify(flowDetail)),
+        log: [...log],
+        pot,
+        gameStarted,
+        skipNextStart
+      });
+    }
+
+    function undo() {
+      if (history.length === 0) return alert("ไม่สามารถย้อนกลับได้");
+      const last = history.pop();
+      scores = last.scores;
+      kangPoints = last.kangPoints;
+      flowPoints = last.flowPoints;
+      flowDetail = last.flowDetail;
+      log = last.log;
+      pot = last.pot;
+      gameStarted = last.gameStarted;
+      skipNextStart = last.skipNextStart;
+      updateLog();
+      updateUI();
+    }
+
+    function resetGame() {
+      if (!confirm("ต้องการรีเซ็ตเกมหรือไม่?")) return;
+      players.forEach(p => {
+        scores[p] = 0;
+        kangPoints[p] = 0;
+        flowPoints[p] = 0;
+        flowDetail[p] = {};
+      });
+      log = [];
+      history = [];
+      pot = 0;
+      gameStarted = false;
+      skipNextStart = false;
+      updateLog();
+      updateUI();
+    }
+
+    function updateUI() {
+      const playerDiv = document.getElementById('players');
+      const winnerSelect = document.getElementById('winnerSelect');
+      const flowFromSelect = document.getElementById('flowFromSelect');
+      const flowToSelect = document.getElementById('flowToSelect');
+      const scoreBoard = document.getElementById('scoreBoard');
+      const payments = document.getElementById('payments');
+      const details = document.getElementById('details');
+
+      playerDiv.innerHTML = '';
+      winnerSelect.innerHTML = '';
+      flowFromSelect.innerHTML = '';
+      flowToSelect.innerHTML = '';
+
+      players.forEach((p, i) => {
+        const row = document.createElement('div');
+        row.className = 'player';
+        row.innerHTML = `<input value="${p}" onchange="changeName(${i}, this.value)" /> <button onclick="removePlayer(${i})">ลบ</button>`;
+        playerDiv.appendChild(row);
+
+        const option = (name) => {
+          const o = document.createElement('option');
+          o.value = name;
+          o.text = name;
+          return o;
+        };
+
+        winnerSelect.appendChild(option(p));
+        flowFromSelect.appendChild(option(p));
+        flowToSelect.appendChild(option(p));
+      });
+
+      let scoreHTML = '<table><tr><th>ผู้เล่น</th><th>แต้มสุทธิ</th></tr>';
+      players.forEach(p => {
+        scoreHTML += `<tr><td>${p}</td><td>${scores[p] || 0}</td></tr>`;
+      });
+      scoreHTML += '</table>';
+      scoreBoard.innerHTML = scoreHTML;
+
+      let detailHTML = '<table><tr><th>ผู้เล่น</th><th>จากแคง</th><th>จากไหล</th></tr>';
+      players.forEach(p => {
+        detailHTML += `<tr><td>${p}</td><td>${kangPoints[p] || 0}</td><td>${flowPoints[p] || 0}</td></tr>`;
+      });
+      detailHTML += '</table>';
+
+      detailHTML += '<h2>8. รายละเอียดการไหลรายบุคคล</h2>';
+      players.forEach(p => {
+        detailHTML += `<strong>${p}</strong><ul>`;
+        const froms = flowDetail[p] || {};
+        let hasData = false;
+        for (let from in froms) {
+          if (froms[from] > 0) {
+            detailHTML += `<li>ไหลจาก ${from}: ${froms[from]} แต้ม</li>`;
+            hasData = true;
+          }
+        }
+        if (!hasData) detailHTML += '<li>ไม่มีข้อมูล</li>';
+        detailHTML += '</ul>';
+      });
+      details.innerHTML = detailHTML;
+
+      let paymentHTML = '';
+      players.forEach(a => {
+        players.forEach(b => {
+          if (a !== b) {
+            const diff = (scores[a] || 0) - (scores[b] || 0);
+            if (diff < 0) {
+              paymentHTML += `${a} จ่ายให้ ${b} ${-diff} แต้ม<br>`;
+            }
+          }
+        });
+      });
+      payments.innerHTML = paymentHTML || 'ไม่มีการชำระ';
+    }
+
+    function addPlayer() {
+      const name = `ผู้เล่น${players.length + 1}`;
+      players.push(name);
+      scores[name] = 0;
+      kangPoints[name] = 0;
+      flowPoints[name] = 0;
+      flowDetail[name] = {};
+      updateUI();
+    }
+
+    function removePlayer(index) {
+      const name = players[index];
+      players.splice(index, 1);
+      delete scores[name];
+      delete kangPoints[name];
+      delete flowPoints[name];
+      delete flowDetail[name];
+      updateUI();
+    }
+
+    function changeName(index, newName) {
+      const oldName = players[index];
+      players[index] = newName;
+      scores[newName] = scores[oldName];
+      kangPoints[newName] = kangPoints[oldName];
+      flowPoints[newName] = flowPoints[oldName];
+      flowDetail[newName] = flowDetail[oldName] || {};
+      delete scores[oldName];
+      delete kangPoints[oldName];
+      delete flowPoints[oldName];
+      delete flowDetail[oldName];
+      updateUI();
+    }
+
+    function startGame() {
+      if (gameStarted) return alert("เริ่มเกมไปแล้ว");
+      if (skipNextStart) {
+        log.push("รอบนี้ไม่ต้องจ่ายเริ่มเกม เนื่องจากรอบก่อนมีแคงพลาด");
+        skipNextStart = false;
+        gameStarted = true;
+        updateLog();
+        return;
+      }
+      saveState();
+      players.forEach(p => scores[p] -= 10);
+      pot = players.length * 10;
+      gameStarted = true;
+      log.push(`เริ่มเกม: ทุกคนจ่าย 10 แต้ม รวม ${pot} แต้มในกองกลาง`);
+      updateLog();
+      updateUI();
+    }
+
+    function addKang() {
+      if (!gameStarted) return alert("เริ่มเกมก่อน");
+      const winner = document.getElementById('winnerSelect').value;
+      saveState();
+      scores[winner] += pot;
+      kangPoints[winner] += pot;
+      log.push(`${winner} แคงสำเร็จ ได้ ${pot} แต้มจากกองกลาง`);
+      pot = 0;
+      gameStarted = false;
+      updateLog();
+      updateUI();
+    }
+
+    function failKang() {
+      if (!gameStarted) return alert("เริ่มเกมก่อน");
+      const loser = document.getElementById('winnerSelect').value;
+      const penalty = players.length * 10;
+      saveState();
+      scores[loser] -= penalty;
+      log.push(`${loser} แคงพลาด! ต้องจ่ายแทนทุกคน ${penalty} แต้ม`);
+      pot = 0;
+      skipNextStart = true;
+      gameStarted = false;
+      updateLog();
+      updateUI();
+    }
+
+    function addFlow() {
+      const from = document.getElementById('flowFromSelect').value;
+      const to = document.getElementById('flowToSelect').value;
+      if (from === to) return alert("เลือกผู้เล่นที่ต่างกัน");
+      saveState();
+      scores[from] += 5;
+      scores[to] -= 5;
+      flowPoints[from] += 5;
+      flowPoints[to] -= 5;
+      flowDetail[from][to] = (flowDetail[from][to] || 0) + 5;
+      log.push(`${from} ไหล ${to} ได้ 5 แต้ม / ${to} เสีย 5 แต้ม`);
+      updateLog();
+      updateUI();
+    }
+
+    function updateLog() {
+      const ul = document.getElementById('log');
+      ul.innerHTML = '';
+      log.slice().reverse().forEach(entry => {
+        const li = document.createElement('li');
+        li.textContent = entry;
+        ul.appendChild(li);
+      });
+    }
+
+    for (let i = 0; i < 4; i++) addPlayer();
+  </script>
+</body>
+</html>
